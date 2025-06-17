@@ -1324,11 +1324,11 @@ nixl_status_t nixlUcxEngine::destroyThreadMapping()
 
 nixlUcxWorker *nixlUcxEngine::getFreeDedicatedWorker() const
 {
-    if (freeWorkers.size() == 0) {
+    const std::lock_guard<std::mutex> lock(workersMutex);
+    if (freeWorkers.empty()) {
         return nullptr;
     }
 
-    const std::lock_guard<std::mutex> lock(workersMutex);
     nixlUcxWorker *worker = freeWorkers.front();
     freeWorkers.pop();
     return worker;
@@ -1345,6 +1345,7 @@ nixlUcxWorker *nixlUcxEngine::getDedicatedWorker() const
     if (worker != nullptr) {
         int err = pthread_setspecific(keyThreadToWorker, worker);
         if (err) {
+            pushFreeWorker(worker);
             NIXL_ERROR << "Failed to set keyThreadToWorker, workerId:"
                 << worker->getWorkerId() << "err:" << err;
             return nullptr;

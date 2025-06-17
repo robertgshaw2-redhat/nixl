@@ -266,7 +266,7 @@ class nixlUcxEngine
         nixl_status_t endConn(const std::string &remote_agent);
 
         // Add worker back to the free workers queue
-        const void pushFreeWorker(nixlUcxWorker* worker) {
+        void pushFreeWorker(nixlUcxWorker* worker) const {
             const std::lock_guard<std::mutex> lock(workersMutex);
             freeWorkers.push(worker);
         }
