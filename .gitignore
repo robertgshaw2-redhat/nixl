@@ -1,0 +1,11 @@
+# Rust
+**/target/
+
+# Abseil-CPP
+subprojects/abseil-cpp-*
+subprojects/packagecache/
+
+.vscode
+
+# AWS EFA test files
+contrib/aws-efa/aws_vars.json
