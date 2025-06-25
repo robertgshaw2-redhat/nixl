@@ -26,6 +26,9 @@
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
+#include <thread>
+#include <vector>
+#include <future> // for std::async alternative
 
 #ifdef HAVE_CUDA
 
@@ -246,7 +249,7 @@ int nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_r
     return 0;
 }
 
-int nixlUcxEngine::vramApplyCtx()
+int nixlUcxEngine::vramApplyCtx() const
 {
     if(!cuda_addr_wa) {
         // Nothing to do
@@ -519,6 +522,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
+    cout << "Is thread enabled : "<<init_params->enableProgTh<<std::endl;
     if (init_params->enableProgTh) {
         pthrOn = true;
         if (!nixlUcxContext::mtLevelIsSupproted(NIXL_UCX_MT_WORKER)) {
@@ -969,7 +973,7 @@ static nixl_status_t _retHelper(nixl_status_t ret,  nixlUcxBackendH *hndl, nixlU
         default:
             // Error. Release all previously initiated ops and exit:
             hndl->release();
-            return NIXL_ERR_BACKEND;
+            return NIXL_ERR_BACKEND;    
     }
     return NIXL_SUCCESS;
 }
@@ -1054,57 +1058,118 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
     size_t i;
+    nixlUcxReq req;
     std::cout << "====== local.descCount(): " << lcnt << std::endl;
    
     nixl_status_t ret;
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
-    nixlUcxPrivateMetadata *lmd;
-    nixlUcxPublicMetadata *rmd;
-    nixlUcxReq req;
+
     size_t workerId = intHandle->getWorkerId();
 
     if (lcnt != rcnt) {
         return NIXL_ERR_INVALID_PARAM;
     }
+    std::vector<std::thread> threads;
+    std::vector<double> iter_times(lcnt);
+    std::vector<double> iter_sizes(lcnt);
+    std::vector<nixl_status_t> rets(lcnt);
+    std::vector<nixlUcxReq> reqs(lcnt);
 
     auto start = std::chrono::high_resolution_clock::now();
-    for(i = 0; i < lcnt; i++) {
-        void *laddr = (void*) local[i].addr;
-        size_t lsize = local[i].len;
-        void *raddr = (void*) remote[i].addr;
-        size_t rsize = remote[i].len;
+    for (i = 0; i < lcnt; ++i) {
+        //threads.emplace_back([&, i]() {
 
-        lmd = (nixlUcxPrivateMetadata*) local[i].metadataP;
-        rmd = (nixlUcxPublicMetadata*) remote[i].metadataP;
+        //    vramApplyCtx();
+            nixlUcxPrivateMetadata *lmd;
+            nixlUcxPublicMetadata *rmd;
+            void *laddr = (void*) local[i].addr;
+            size_t lsize = local[i].len;
+            void *raddr = (void*) remote[i].addr;
+            size_t rsize = remote[i].len;
 
-        if (lsize != rsize) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
+            lmd = (nixlUcxPrivateMetadata*) local[i].metadataP;
+            rmd = (nixlUcxPublicMetadata*) remote[i].metadataP;
 
-        switch (operation) {
-        case NIXL_READ:
-            ret = rmd->conn->getEp(workerId)->read((uint64_t) raddr, rmd->getRkey(workerId), laddr, lmd->mem, lsize, req);
-            break;
-        case NIXL_WRITE:
-            ret = rmd->conn->getEp(workerId)->write(laddr, lmd->mem, (uint64_t) raddr, rmd->getRkey(workerId), lsize, req);
-            break;
-        default:
-            return NIXL_ERR_INVALID_PARAM;
-        }
+            if (lsize != rsize) {
+                rets[i] = NIXL_ERR_INVALID_PARAM;
+                return;
+            }
+            nixl_status_t ret;
+            if (operation == NIXL_READ) {
+                auto iter_start = std::chrono::high_resolution_clock::now();
+                ret = rmd->conn->getEp(workerId)->read((uint64_t) raddr, rmd->getRkey(workerId), laddr, lmd->mem, lsize, reqs[i]);
+                auto iter_end = std::chrono::high_resolution_clock::now();
+                std::chrono::duration<double, std::micro> iter_duration = iter_end - iter_start;
+                iter_times[i] = iter_duration.count();
+                iter_sizes[i] = lsize;
+            } else if (operation == NIXL_WRITE) {
+                ret = rmd->conn->getEp(workerId)->write(laddr, lmd->mem, (uint64_t) raddr, rmd->getRkey(workerId), lsize, reqs[i]);
+            } else {
+                rets[i] = NIXL_ERR_INVALID_PARAM;
+                return;
+            }
 
-        if (_retHelper(ret, intHandle, req)) {
-            return ret;
+            rets[i] = ret;
+       // });
+    }
+
+    for (auto& t : threads) t.join();
+
+    for (i = 0; i < lcnt; ++i) {
+        if (_retHelper(rets[i], intHandle, reqs[i])) {
+            return rets[i];
         }
     }
+
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end - start;
+    std::cout << "Total desc count= "<< lcnt<<std::endl;
     std::cout << "Elapsed time: " << duration.count() << " seconds" << std::endl;
 
+    if (!iter_times.empty()) {
+        auto minmax = std::minmax_element(iter_times.begin(), iter_times.end());
+        double min_time = *minmax.first;
+        double max_time = *minmax.second;
 
+        std::vector<double> sorted_times = iter_times; // copy
+        std::sort(sorted_times.begin(), sorted_times.end());
+        double median_time;
+        size_t n = sorted_times.size();
+        if (n % 2 == 0) {
+            median_time = (sorted_times[n/2 - 1] + sorted_times[n/2]) / 2.0;
+        } else {
+            median_time = sorted_times[n/2];
+        }
+
+        std::cout << "Min read time (us): " << min_time << std::endl;
+        std::cout << "Max read time (us): " << max_time << std::endl;
+        std::cout << "Median read time (us): " << median_time << std::endl;
+    }
+
+    if (!iter_sizes.empty()) {
+        auto minmax = std::minmax_element(iter_sizes.begin(), iter_sizes.end());
+        double min_size = *minmax.first;
+        double max_size = *minmax.second;
+
+        std::vector<double> sorted_sizes = iter_sizes; // copy
+        std::sort(sorted_sizes.begin(), sorted_sizes.end());
+        double median_size;
+        size_t n = sorted_sizes.size();
+        if (n % 2 == 0) {
+            median_size = (sorted_sizes[n/2 - 1] + sorted_sizes[n/2]) / 2.0;
+        } else {
+            median_size = sorted_sizes[n/2];
+        }
+
+        std::cout << "Min read size (B): " << min_size << std::endl;
+        std::cout << "Max read size (B): " << max_size << std::endl;
+        std::cout << "Median read size (B): " << median_size << std::endl;
+    }
     /*
      * Flush keeps intHandle non-empty until the operation is actually
      * completed, which can happen after local requests completion.
      */
+    nixlUcxPublicMetadata *rmd;
     rmd = (nixlUcxPublicMetadata*) remote[0].metadataP;
     ret = rmd->conn->getEp(workerId)->flushEp(req);
     if (_retHelper(ret, intHandle, req)) {

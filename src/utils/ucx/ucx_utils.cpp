@@ -317,7 +317,7 @@ bool nixlUcxContext::mtLevelIsSupproted(nixl_ucx_mt_t mt_type)
     ucp_lib_attr_t attr;
     attr.field_mask = UCP_LIB_ATTR_FIELD_MAX_THREAD_LEVEL;
     ucp_lib_query(&attr);
-
+    cout << "MT Level : "<<mt_type<<std::endl;
     switch(mt_type) {
     case NIXL_UCX_MT_SINGLE:
         return (attr.max_thread_level >= UCS_THREAD_MODE_SERIALIZED);
@@ -409,7 +409,7 @@ nixlUcxWorker::nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx): ctx(_ctx)
 
     memset(&worker_params, 0, sizeof(worker_params));
     worker_params.field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
-
+    cout << "Initializing NIXL Worker with MT Type : "<< ctx->mt_type<<std::endl;
     switch (ctx->mt_type) {
     case NIXL_UCX_MT_CTX:
         worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
