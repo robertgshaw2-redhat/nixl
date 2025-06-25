@@ -1070,8 +1070,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     if (lcnt != rcnt) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    // Thread pool setup
-    size_t num_threads = std::min<size_t>(lcnt, std::thread::hardware_concurrency());
+    size_t num_threads = std::min<size_t>(lcnt, std::thread::hardware_concurrency())/2;
     if (num_threads == 0) num_threads = 1;
     std::cout<< "Total threads starting = "<<num_threads<<std::endl;
     std::vector<std::queue<std::function<void()>>> task_queues(num_threads);
@@ -1085,7 +1084,6 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     std::vector<nixl_status_t> rets(lcnt);
     std::vector<nixlUcxReq> reqs(lcnt);
 
-    // Worker function
     auto worker = [&](size_t tid) {
         while (true) {
             std::function<void()> task;
