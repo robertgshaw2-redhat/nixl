@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include "absl/strings/numbers.h"
 #include <thread>
+#include <queue>
 #include <vector>
 #include <future> // for std::async alternative
 
@@ -522,7 +523,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
-    cout << "Is thread enabled : "<<init_params->enableProgTh<<std::endl;
+    std::cout << "Is thread enabled : "<<init_params->enableProgTh<<std::endl;
     if (init_params->enableProgTh) {
         pthrOn = true;
         if (!nixlUcxContext::mtLevelIsSupproted(NIXL_UCX_MT_WORKER)) {
@@ -1069,51 +1070,90 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     if (lcnt != rcnt) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    std::vector<std::thread> threads;
+    // Thread pool setup
+    size_t num_threads = std::min<size_t>(lcnt, std::thread::hardware_concurrency());
+    if (num_threads == 0) num_threads = 1;
+    std::cout<< "Total threads starting = "<<num_threads<<std::endl;
+    std::vector<std::queue<std::function<void()>>> task_queues(num_threads);
+    std::vector<std::mutex> queue_mutexes(num_threads);
+    std::vector<std::condition_variable> queue_conds(num_threads);
+    std::vector<bool> done_flags(num_threads, false);
+    std::vector<std::thread> pool;
+
     std::vector<double> iter_times(lcnt);
     std::vector<double> iter_sizes(lcnt);
     std::vector<nixl_status_t> rets(lcnt);
     std::vector<nixlUcxReq> reqs(lcnt);
 
-    auto start = std::chrono::high_resolution_clock::now();
-    for (i = 0; i < lcnt; ++i) {
-        //threads.emplace_back([&, i]() {
-
-        //    vramApplyCtx();
-            nixlUcxPrivateMetadata *lmd;
-            nixlUcxPublicMetadata *rmd;
-            void *laddr = (void*) local[i].addr;
-            size_t lsize = local[i].len;
-            void *raddr = (void*) remote[i].addr;
-            size_t rsize = remote[i].len;
-
-            lmd = (nixlUcxPrivateMetadata*) local[i].metadataP;
-            rmd = (nixlUcxPublicMetadata*) remote[i].metadataP;
-
-            if (lsize != rsize) {
-                rets[i] = NIXL_ERR_INVALID_PARAM;
-                return;
+    // Worker function
+    auto worker = [&](size_t tid) {
+        while (true) {
+            std::function<void()> task;
+            {
+                std::unique_lock<std::mutex> lock(queue_mutexes[tid]);
+                queue_conds[tid].wait(lock, [&]{ return !task_queues[tid].empty() || done_flags[tid]; });
+                if (done_flags[tid] && task_queues[tid].empty()) break;
+                if (!task_queues[tid].empty()) {
+                    task = std::move(task_queues[tid].front());
+                    task_queues[tid].pop();
+                }
             }
-            nixl_status_t ret;
-            if (operation == NIXL_READ) {
-                auto iter_start = std::chrono::high_resolution_clock::now();
-                ret = rmd->conn->getEp(workerId)->read((uint64_t) raddr, rmd->getRkey(workerId), laddr, lmd->mem, lsize, reqs[i]);
-                auto iter_end = std::chrono::high_resolution_clock::now();
-                std::chrono::duration<double, std::micro> iter_duration = iter_end - iter_start;
-                iter_times[i] = iter_duration.count();
-                iter_sizes[i] = lsize;
-            } else if (operation == NIXL_WRITE) {
-                ret = rmd->conn->getEp(workerId)->write(laddr, lmd->mem, (uint64_t) raddr, rmd->getRkey(workerId), lsize, reqs[i]);
-            } else {
-                rets[i] = NIXL_ERR_INVALID_PARAM;
-                return;
-            }
-
-            rets[i] = ret;
-       // });
+            if (task) task();
+        }
+    };
+    for (size_t t = 0; t < num_threads; ++t) {
+        pool.emplace_back(worker, t);
     }
 
-    for (auto& t : threads) t.join();
+    auto start = std::chrono::high_resolution_clock::now();
+    // Assign tasks round-robin
+    for (i = 0; i < lcnt; ++i) {
+        size_t tid = i % num_threads;
+        {
+            std::lock_guard<std::mutex> lock(queue_mutexes[tid]);
+            task_queues[tid].emplace([&, i]() {
+                vramApplyCtx();
+                nixlUcxPrivateMetadata *lmd;
+                nixlUcxPublicMetadata *rmd;
+                void *laddr = (void*) local[i].addr;
+                size_t lsize = local[i].len;
+                void *raddr = (void*) remote[i].addr;
+                size_t rsize = remote[i].len;
+
+                lmd = (nixlUcxPrivateMetadata*) local[i].metadataP;
+                rmd = (nixlUcxPublicMetadata*) remote[i].metadataP;
+
+                if (lsize != rsize) {
+                    rets[i]  = NIXL_ERR_INVALID_PARAM;
+                    return;
+                }
+                nixl_status_t ret;
+                if (operation == NIXL_READ) {
+                    auto iter_start = std::chrono::high_resolution_clock::now();
+                    ret = rmd->conn->getEp(workerId)->read((uint64_t) raddr, rmd->getRkey(workerId), laddr, lmd->mem, lsize, reqs[i]);
+                    auto iter_end = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double, std::micro> iter_duration = iter_end - iter_start;
+                    iter_times[i] = iter_duration.count();
+                    iter_sizes[i] = lsize;
+                } else if (operation == NIXL_WRITE) {
+                    ret = rmd->conn->getEp(workerId)->write(laddr, lmd->mem, (uint64_t) raddr, rmd->getRkey(workerId), lsize, reqs[i]);
+                } else {
+                    rets[i] = NIXL_ERR_INVALID_PARAM;
+                    return;
+                }
+                rets[i] = ret;
+            });
+        }
+        queue_conds[tid].notify_one();
+    }
+    for (size_t t = 0; t < num_threads; ++t) {
+        {
+            std::lock_guard<std::mutex> lock(queue_mutexes[t]);
+            done_flags[t] = true;
+        }
+        queue_conds[t].notify_one();
+    }
+    for (auto& t : pool) t.join();
 
     for (i = 0; i < lcnt; ++i) {
         if (_retHelper(rets[i], intHandle, reqs[i])) {
