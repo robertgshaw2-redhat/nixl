@@ -16,7 +16,6 @@
  */
 
 #include <iostream>
-#include <future>
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -850,17 +849,13 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // If status is not NIXL_IN_PROG we can repost,
-    std::promise<nixl_status_t> prom;
-    std::future<nixl_status_t> fut = prom.get_future();
-
-    std::thread t([=, &prom]() mutable {
-        nixl_status_t t_ret = req_hndl->engine->postXfer (req_hndl->backendOp,
-                                         *req_hndl->initiatorDescs,
-                                         *req_hndl->targetDescs,
-                                          req_hndl->remoteAgent,
-                                          req_hndl->backendHandle,
-                                          &opt_args);
-        prom.set_value(t_ret);
+    std::thread t([=]() mutable {
+        req_hndl->engine->postXfer (req_hndl->backendOp,
+            *req_hndl->initiatorDescs,
+            *req_hndl->targetDescs,
+            req_hndl->remoteAgent,
+            req_hndl->backendHandle,
+            &opt_args);
     });
     t.detach();
     // For now, hardcode the return to IN_PROG

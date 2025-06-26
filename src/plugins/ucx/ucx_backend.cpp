@@ -310,6 +310,7 @@ static void _internalRequestReset(nixlUcxIntReq *req) {
 class nixlUcxBackendH : public nixlBackendReqH {
 private:
     nixlUcxIntReq head;
+    mutable std::mutex head_mutex;
     const nixlUcxEngine &eng;
     size_t worker_id;
 
@@ -330,11 +331,13 @@ public:
     nixlUcxBackendH(const nixlUcxEngine &eng_, size_t worker_id_): eng(eng_), worker_id(worker_id_) {}
 
     void append(nixlUcxIntReq *req) {
+        std::lock_guard<std::mutex> lock(head_mutex);
         head.link(req);
     }
 
     nixl_status_t release()
     {
+        std::lock_guard<std::mutex> lock(head_mutex);
         nixlUcxIntReq *req = head.next();
 
         if (!req) {
@@ -361,6 +364,7 @@ public:
 
     nixl_status_t status()
     {
+        std::lock_guard<std::mutex> lock(head_mutex);
         nixlUcxIntReq *req = head.next();
         nixl_status_t out_ret = NIXL_SUCCESS;
 
@@ -974,7 +978,7 @@ static nixl_status_t _retHelper(nixl_status_t ret,  nixlUcxBackendH *hndl, nixlU
         default:
             // Error. Release all previously initiated ops and exit:
             hndl->release();
-            return NIXL_ERR_BACKEND;    
+            return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
 }
@@ -1056,12 +1060,13 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    vramApplyCtx();
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
     size_t i;
     nixlUcxReq req;
     std::cout << "====== local.descCount(): " << lcnt << std::endl;
-   
+
     nixl_status_t ret;
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
 
@@ -1070,47 +1075,47 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     if (lcnt != rcnt) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    size_t num_threads = std::min<size_t>(lcnt, std::thread::hardware_concurrency())/2;
-    if (num_threads == 0) num_threads = 1;
-    std::cout<< "Total threads starting = "<<num_threads<<std::endl;
-    std::vector<std::queue<std::function<void()>>> task_queues(num_threads);
-    std::vector<std::mutex> queue_mutexes(num_threads);
-    std::vector<std::condition_variable> queue_conds(num_threads);
-    std::vector<bool> done_flags(num_threads, false);
-    std::vector<std::thread> pool;
+    // size_t num_threads = std::min<size_t>(lcnt, std::thread::hardware_concurrency())/2;
+    // if (num_threads == 0) num_threads = 1;
+    // std::cout<< "Total threads starting = "<<num_threads<<std::endl;
+    // std::vector<std::queue<std::function<void()>>> task_queues(num_threads);
+    // std::vector<std::mutex> queue_mutexes(num_threads);
+    // std::vector<std::condition_variable> queue_conds(num_threads);
+    // std::vector<bool> done_flags(num_threads, false);
+    // std::vector<std::thread> pool;
 
     std::vector<double> iter_times(lcnt);
     std::vector<double> iter_sizes(lcnt);
     std::vector<nixl_status_t> rets(lcnt);
     std::vector<nixlUcxReq> reqs(lcnt);
 
-    auto worker = [&](size_t tid) {
-        while (true) {
-            std::function<void()> task;
-            {
-                std::unique_lock<std::mutex> lock(queue_mutexes[tid]);
-                queue_conds[tid].wait(lock, [&]{ return !task_queues[tid].empty() || done_flags[tid]; });
-                if (done_flags[tid] && task_queues[tid].empty()) break;
-                if (!task_queues[tid].empty()) {
-                    task = std::move(task_queues[tid].front());
-                    task_queues[tid].pop();
-                }
-            }
-            if (task) task();
-        }
-    };
-    for (size_t t = 0; t < num_threads; ++t) {
-        pool.emplace_back(worker, t);
-    }
+    // auto worker = [&](size_t tid) {
+    //     while (true) {
+    //         std::function<void()> task;
+    //         {
+    //             std::unique_lock<std::mutex> lock(queue_mutexes[tid]);
+    //             queue_conds[tid].wait(lock, [&]{ return !task_queues[tid].empty() || done_flags[tid]; });
+    //             if (done_flags[tid] && task_queues[tid].empty()) break;
+    //             if (!task_queues[tid].empty()) {
+    //                 task = std::move(task_queues[tid].front());
+    //                 task_queues[tid].pop();
+    //             }
+    //         }
+    //         if (task) task();
+    //     }
+    // };
+    // for (size_t t = 0; t < num_threads; ++t) {
+    //     pool.emplace_back(worker, t);
+    // }
 
     auto start = std::chrono::high_resolution_clock::now();
     // Assign tasks round-robin
     for (i = 0; i < lcnt; ++i) {
-        size_t tid = i % num_threads;
-        {
-            std::lock_guard<std::mutex> lock(queue_mutexes[tid]);
-            task_queues[tid].emplace([&, i]() {
-                vramApplyCtx();
+        // size_t tid = i % num_threads;
+        // {
+        //     std::lock_guard<std::mutex> lock(queue_mutexes[tid]);
+        //     task_queues[tid].emplace([&, i]() {
+        //         
                 nixlUcxPrivateMetadata *lmd;
                 nixlUcxPublicMetadata *rmd;
                 void *laddr = (void*) local[i].addr;
@@ -1122,8 +1127,8 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                 rmd = (nixlUcxPublicMetadata*) remote[i].metadataP;
 
                 if (lsize != rsize) {
-                    rets[i]  = NIXL_ERR_INVALID_PARAM;
-                    return;
+                    ret  = NIXL_ERR_INVALID_PARAM;
+                    return ret;
                 }
                 nixl_status_t ret;
                 if (operation == NIXL_READ) {
@@ -1136,23 +1141,23 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                 } else if (operation == NIXL_WRITE) {
                     ret = rmd->conn->getEp(workerId)->write(laddr, lmd->mem, (uint64_t) raddr, rmd->getRkey(workerId), lsize, reqs[i]);
                 } else {
-                    rets[i] = NIXL_ERR_INVALID_PARAM;
-                    return;
+                    ret = NIXL_ERR_INVALID_PARAM;
+                    return ret;
                 }
                 rets[i] = ret;
-            });
-        }
-        queue_conds[tid].notify_one();
+        //    });
+        //}
+        //queue_conds[tid].notify_one();
+            std::cout<<"Finished posting read"<<std::endl;
     }
-    for (size_t t = 0; t < num_threads; ++t) {
-        {
-            std::lock_guard<std::mutex> lock(queue_mutexes[t]);
-            done_flags[t] = true;
-        }
-        queue_conds[t].notify_one();
-    }
-    for (auto& t : pool) t.join();
-
+    // for (size_t t = 0; t < num_threads; ++t) {
+    //     {
+    //         std::lock_guard<std::mutex> lock(queue_mutexes[t]);
+    //         done_flags[t] = true;
+    //     }
+    //     queue_conds[t].notify_one();
+    // }
+    // for (auto& t : pool) t.join();
     for (i = 0; i < lcnt; ++i) {
         if (_retHelper(rets[i], intHandle, reqs[i])) {
             return rets[i];
