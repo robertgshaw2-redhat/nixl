@@ -1148,7 +1148,6 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
         //    });
         //}
         //queue_conds[tid].notify_one();
-            std::cout<<"Finished posting read"<<std::endl;
     }
     // for (size_t t = 0; t < num_threads; ++t) {
     //     {
