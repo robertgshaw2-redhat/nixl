@@ -874,7 +874,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
 nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
-    std::count<<"Checking xfer status"<<std::endl;
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck.
     if (req_hndl->status == NIXL_IN_PROG) {
