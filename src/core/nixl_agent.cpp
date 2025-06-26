@@ -16,6 +16,7 @@
  */
 
 #include <iostream>
+#include <future>
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -849,19 +850,31 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // If status is not NIXL_IN_PROG we can repost,
-    ret = req_hndl->engine->postXfer (req_hndl->backendOp,
-                                     *req_hndl->initiatorDescs,
-                                     *req_hndl->targetDescs,
-                                      req_hndl->remoteAgent,
-                                      req_hndl->backendHandle,
-                                      &opt_args);
+    std::promise<nixl_status_t> prom;
+    std::future<nixl_status_t> fut = prom.get_future();
+
+    std::thread t([=, &prom]() mutable {
+        nixl_status_t t_ret = req_hndl->engine->postXfer (req_hndl->backendOp,
+                                         *req_hndl->initiatorDescs,
+                                         *req_hndl->targetDescs,
+                                          req_hndl->remoteAgent,
+                                          req_hndl->backendHandle,
+                                          &opt_args);
+        prom.set_value(t_ret);
+    });
+    t.detach();
+    // For now, hardcode the return to IN_PROG
+    // Later, if needed this could be another status, which would lead to probing the fut.get
+    //ret = fut.get();
+    ret = NIXL_IN_PROG;
+
     req_hndl->status = ret;
     return ret;
 }
 
 nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
-
+    std::count<<"Checking xfer status"<<std::endl;
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck.
     if (req_hndl->status == NIXL_IN_PROG) {
