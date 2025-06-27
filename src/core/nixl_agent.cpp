@@ -849,19 +849,23 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // If status is not NIXL_IN_PROG we can repost,
-    ret = req_hndl->engine->postXfer (req_hndl->backendOp,
-                                     *req_hndl->initiatorDescs,
-                                     *req_hndl->targetDescs,
-                                      req_hndl->remoteAgent,
-                                      req_hndl->backendHandle,
-                                      &opt_args);
+    std::thread t([=]() mutable {
+        req_hndl->engine->postXfer (req_hndl->backendOp,
+            *req_hndl->initiatorDescs,
+            *req_hndl->targetDescs,
+            req_hndl->remoteAgent,
+            req_hndl->backendHandle,
+            &opt_args);
+    });
+    t.detach();
+    ret = NIXL_IN_PROG;
+
     req_hndl->status = ret;
     return ret;
 }
 
 nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
-
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck.
     if (req_hndl->status == NIXL_IN_PROG) {

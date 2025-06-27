@@ -246,7 +246,7 @@ int nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_r
     return 0;
 }
 
-int nixlUcxEngine::vramApplyCtx()
+int nixlUcxEngine::vramApplyCtx() const
 {
     if(!cuda_addr_wa) {
         // Nothing to do
@@ -308,6 +308,8 @@ private:
     nixlUcxIntReq head;
     const nixlUcxEngine &eng;
     size_t worker_id;
+    bool ucpPostInProgress;
+
 
     // Notification to be sent after completion of all requests
     struct Notif {
@@ -407,6 +409,18 @@ public:
 
     size_t getWorkerId() const {
         return worker_id;
+    }
+
+    void setUcpPostInProgress() {
+        ucpPostInProgress = true;
+    }
+
+    void unSetUcpPostInProgress() {
+        ucpPostInProgress = false;
+    }
+
+    bool isUcpPostInProgress() {
+        return ucpPostInProgress;
     }
 };
 
@@ -519,6 +533,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
+    std::cout << "Is thread enabled : "<<init_params->enableProgTh<<std::endl;
     if (init_params->enableProgTh) {
         pthrOn = true;
         if (!nixlUcxContext::mtLevelIsSupproted(NIXL_UCX_MT_WORKER)) {
@@ -1051,24 +1066,28 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    vramApplyCtx();
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    intHandle->setUcpPostInProgress();
+
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
     size_t i;
-    std::cout << "====== local.descCount(): " << lcnt << std::endl;
-   
-    nixl_status_t ret;
-    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    nixlUcxReq req;
     nixlUcxPrivateMetadata *lmd;
     nixlUcxPublicMetadata *rmd;
-    nixlUcxReq req;
+    nixl_status_t ret;
+
     size_t workerId = intHandle->getWorkerId();
 
     if (lcnt != rcnt) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
+
     auto start = std::chrono::high_resolution_clock::now();
-    for(i = 0; i < lcnt; i++) {
+    // Assign tasks round-robin
+    for (i = 0; i < lcnt; ++i) {
         void *laddr = (void*) local[i].addr;
         size_t lsize = local[i].len;
         void *raddr = (void*) remote[i].addr;
@@ -1078,28 +1097,28 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
         rmd = (nixlUcxPublicMetadata*) remote[i].metadataP;
 
         if (lsize != rsize) {
-            return NIXL_ERR_INVALID_PARAM;
+            ret  = NIXL_ERR_INVALID_PARAM;
+            return ret;
         }
-
-        switch (operation) {
-        case NIXL_READ:
+        nixl_status_t ret;
+        if (operation == NIXL_READ) {
             ret = rmd->conn->getEp(workerId)->read((uint64_t) raddr, rmd->getRkey(workerId), laddr, lmd->mem, lsize, req);
-            break;
-        case NIXL_WRITE:
+        } else if (operation == NIXL_WRITE) {
             ret = rmd->conn->getEp(workerId)->write(laddr, lmd->mem, (uint64_t) raddr, rmd->getRkey(workerId), lsize, req);
-            break;
-        default:
-            return NIXL_ERR_INVALID_PARAM;
+        } else {
+            ret = NIXL_ERR_INVALID_PARAM;
+            return ret;
         }
-
         if (_retHelper(ret, intHandle, req)) {
             return ret;
         }
+
     }
+    intHandle->unSetUcpPostInProgress();
+
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end - start;
     std::cout << "Elapsed time: " << duration.count() << " seconds" << std::endl;
-
 
     /*
      * Flush keeps intHandle non-empty until the operation is actually
@@ -1131,6 +1150,11 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    
+    if (intHandle->isUcpPostInProgress()) {
+        return NIXL_IN_PROG;
+    }
+
     size_t workerId = intHandle->getWorkerId();
 
     nixl_status_t status = intHandle->status();

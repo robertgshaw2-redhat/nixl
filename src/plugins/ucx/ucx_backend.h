@@ -141,7 +141,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         void vramInitCtx();
         void vramFiniCtx();
         int vramUpdateCtx(void *address, uint64_t devId, bool &restart_reqd);
-        int vramApplyCtx();
+        int vramApplyCtx() const;
 
         // Threading infrastructure
         //   TODO: move the thread management one outside of NIXL common infra
