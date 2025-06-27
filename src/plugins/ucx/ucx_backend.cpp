@@ -1070,6 +1070,9 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                                        const nixl_opt_b_args_t* opt_args) const
 {
     vramApplyCtx();
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    intHandle->setUcpPostInProgress();
+    
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
     size_t i;
@@ -1077,7 +1080,6 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     nixlUcxPrivateMetadata *lmd;
     nixlUcxPublicMetadata *rmd;
     nixl_status_t ret;
-    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
 
     size_t workerId = intHandle->getWorkerId();
 
