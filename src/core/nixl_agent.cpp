@@ -858,9 +858,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
             &opt_args);
     });
     t.detach();
-    // For now, hardcode the return to IN_PROG
-    // Later, if needed this could be another status, which would lead to probing the fut.get
-    //ret = fut.get();
     ret = NIXL_IN_PROG;
 
     req_hndl->status = ret;

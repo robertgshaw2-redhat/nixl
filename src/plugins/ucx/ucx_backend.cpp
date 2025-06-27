@@ -29,7 +29,6 @@
 #include <thread>
 #include <queue>
 #include <vector>
-#include <future> // for std::async alternative
 
 #ifdef HAVE_CUDA
 
@@ -312,6 +311,8 @@ private:
     nixlUcxIntReq head;
     const nixlUcxEngine &eng;
     size_t worker_id;
+    bool ucpPostInProgress;
+
 
     // Notification to be sent after completion of all requests
     struct Notif {
@@ -411,6 +412,18 @@ public:
 
     size_t getWorkerId() const {
         return worker_id;
+    }
+
+    void setUcpPostInProgress() {
+        ucpPostInProgress = true;
+    }
+
+    void unSetUcpPostInProgress() {
+        ucpPostInProgress = false;
+    }
+
+    bool isUcpPostInProgress() {
+        return ucpPostInProgress;
     }
 };
 
@@ -1061,7 +1074,8 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     size_t rcnt = remote.descCount();
     size_t i;
     nixlUcxReq req;
-
+    nixlUcxPrivateMetadata *lmd;
+    nixlUcxPublicMetadata *rmd;
     nixl_status_t ret;
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
 
@@ -1071,16 +1085,10 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    std::vector<double> iter_times(lcnt);
-    std::vector<double> iter_sizes(lcnt);
-    std::vector<nixl_status_t> rets(lcnt);
-    std::vector<nixlUcxReq> reqs(lcnt);
 
     auto start = std::chrono::high_resolution_clock::now();
     // Assign tasks round-robin
     for (i = 0; i < lcnt; ++i) {
-        nixlUcxPrivateMetadata *lmd;
-        nixlUcxPublicMetadata *rmd;
         void *laddr = (void*) local[i].addr;
         size_t lsize = local[i].len;
         void *raddr = (void*) remote[i].addr;
@@ -1095,25 +1103,19 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
         }
         nixl_status_t ret;
         if (operation == NIXL_READ) {
-            auto iter_start = std::chrono::high_resolution_clock::now();
-            ret = rmd->conn->getEp(workerId)->read((uint64_t) raddr, rmd->getRkey(workerId), laddr, lmd->mem, lsize, reqs[i]);
-            auto iter_end = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<double, std::micro> iter_duration = iter_end - iter_start;
-            iter_times[i] = iter_duration.count();
-            iter_sizes[i] = lsize;
+            ret = rmd->conn->getEp(workerId)->read((uint64_t) raddr, rmd->getRkey(workerId), laddr, lmd->mem, lsize, req);
         } else if (operation == NIXL_WRITE) {
-            ret = rmd->conn->getEp(workerId)->write(laddr, lmd->mem, (uint64_t) raddr, rmd->getRkey(workerId), lsize, reqs[i]);
+            ret = rmd->conn->getEp(workerId)->write(laddr, lmd->mem, (uint64_t) raddr, rmd->getRkey(workerId), lsize, req);
         } else {
             ret = NIXL_ERR_INVALID_PARAM;
             return ret;
         }
-            rets[i] = ret;
-    }
-    for (i = 0; i < lcnt; ++i) {
-        if (_retHelper(rets[i], intHandle, reqs[i])) {
-            return rets[i];
+        if (_retHelper(ret, intHandle, req)) {
+            return ret;
         }
+
     }
+    intHandle->unSetUcpPostInProgress();
 
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end - start;
@@ -1123,7 +1125,6 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
      * Flush keeps intHandle non-empty until the operation is actually
      * completed, which can happen after local requests completion.
      */
-    nixlUcxPublicMetadata *rmd;
     rmd = (nixlUcxPublicMetadata*) remote[0].metadataP;
     ret = rmd->conn->getEp(workerId)->flushEp(req);
     if (_retHelper(ret, intHandle, req)) {
@@ -1150,6 +1151,11 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    
+    if (intHandle->isUcpPostInProgress()) {
+        return NIXL_IN_PROG;
+    }
+
     size_t workerId = intHandle->getWorkerId();
 
     nixl_status_t status = intHandle->status();
