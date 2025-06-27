@@ -26,9 +26,6 @@
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
-#include <thread>
-#include <queue>
-#include <vector>
 
 #ifdef HAVE_CUDA
 
@@ -1072,7 +1069,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     vramApplyCtx();
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
     intHandle->setUcpPostInProgress();
-    
+
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
     size_t i;
