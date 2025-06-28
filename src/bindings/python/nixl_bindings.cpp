@@ -522,6 +522,40 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(ret);
                     return ret;
                 }, py::arg("reqh"), py::arg("notif_msg") = std::string(""))
+        .def("postXferReqBatched", [](nixlAgent &agent, std::vector<uintptr_t> req_handles, std::vector<std::string> notif_msgs) -> std::vector<nixl_status_t> {
+                    std::vector<nixlXferReqH*> reqh_ptrs;
+                    std::vector<const nixl_opt_args_t*> extra_params_ptrs;
+                    std::vector<nixl_opt_args_t> extra_params_storage;
+                    
+                    reqh_ptrs.reserve(req_handles.size());
+                    for (uintptr_t handle : req_handles) {
+                        reqh_ptrs.push_back((nixlXferReqH*)handle);
+                    }
+                    
+                    if (!notif_msgs.empty()) {
+                        extra_params_storage.reserve(notif_msgs.size());
+                        extra_params_ptrs.reserve(notif_msgs.size());
+                        
+                        for (size_t i = 0; i < notif_msgs.size(); ++i) {
+                            if (i < req_handles.size()) {
+                                extra_params_storage.emplace_back();
+                                if (!notif_msgs[i].empty()) {
+                                    extra_params_storage.back().notifMsg = notif_msgs[i];
+                                    extra_params_storage.back().hasNotif = true;
+                                }
+                                extra_params_ptrs.push_back(&extra_params_storage.back());
+                            }
+                        }
+                    }
+                    
+                    std::vector<nixl_status_t> results = agent.postXferReqBatched(reqh_ptrs, extra_params_ptrs);
+                    
+                    for (nixl_status_t status : results) {
+                        throw_nixl_exception(status);
+                    }
+                    
+                    return results;
+                }, py::arg("req_handles"), py::arg("notif_msgs") = std::vector<std::string>())
         .def("getXferStatus", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     nixl_status_t ret = agent.getXferStatus((nixlXferReqH*) reqh);
                     throw_nixl_exception(ret);

@@ -465,6 +465,29 @@ class nixl_agent:
             return "ERR"
 
     """
+    @brief  Initiate multiple data transfer operations in a batch.
+            After calling this, each transfer state can be checked asynchronously till completion.
+            Returns a list of status strings corresponding to each handle.
+
+    @param handles List of handles to transfer operations, from make_prepped_xfer or initialize_xfer.
+    @param notif_msgs List of notification messages corresponding to each handle.
+           Each notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
+    @return List of status strings for each transfer operation ("DONE", "PROC", or "ERR").
+    """
+
+    def transfer_batched(self, handles: list[nixl_xfer_handle], notif_msgs: list[bytes]) -> list[str]:
+        statuses = self.agent.postXferReqBatched(handles, notif_msgs)
+        result = []
+        for status in statuses:
+            if status == nixlBind.NIXL_SUCCESS:
+                result.append("DONE")
+            elif status == nixlBind.NIXL_IN_PROG:
+                result.append("PROC")
+            else:
+                result.append("ERR")
+        return result
+
+    """
     @brief Check the state of a transfer operation.
 
     @param handle Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.

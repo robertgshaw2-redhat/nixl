@@ -868,7 +868,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
 std::vector<nixl_status_t>
 nixlAgent::postXferReqBatched(const std::vector<nixlXferReqH*> &req_hndls,
-                              const nixl_opt_args_t* extra_params) const {
+                              const std::vector<const nixl_opt_args_t*> &extra_params) const {
     if (req_hndls.empty()) {
         return {NIXL_ERR_INVALID_PARAM};
     }
@@ -876,10 +876,11 @@ nixlAgent::postXferReqBatched(const std::vector<nixlXferReqH*> &req_hndls,
     std::vector<std::future<nixl_status_t>> futures;
     futures.reserve(req_hndls.size());
 
-    for (nixlXferReqH* req_hndl : req_hndls) {
+    for (size_t i = 0; i < req_hndls.size(); ++i) {
+        const nixl_opt_args_t* params = (i < extra_params.size()) ? extra_params[i] : nullptr;
         futures.emplace_back(
-            std::async(std::launch::async, [this, req_hndl, extra_params]() {
-                return this->postXferReq(req_hndl, extra_params);
+            std::async(std::launch::async, [this, req_hndl = req_hndls[i], params]() {
+                return this->postXferReq(req_hndl, params);
             })
         );
     }
