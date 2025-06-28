@@ -266,6 +266,20 @@ class nixlAgent {
                      const nixl_opt_args_t* extra_params = nullptr) const;
 
         /**
+         * @brief  Submit multiple transfer requests in parallel using a threadpool.
+         *         Each transfer request is launched asynchronously in its own thread.
+         *         This function blocks until all transfers are submitted (but not necessarily completed).
+         *         
+         * @param  req_hndls     Vector of transfer request handles to be posted in parallel
+         * @param  extra_params  Optional extra parameters used in posting transfer requests
+         * @return std::vector<nixl_status_t> Vector of status codes, one for each transfer request
+         *                                    in the same order as the input vector
+         */
+        std::vector<nixl_status_t>
+        postXferReqBatched (const std::vector<nixlXferReqH*> &req_hndls,
+                           const nixl_opt_args_t* extra_params = nullptr) const;
+
+        /**
          * @brief  Check the status of transfer request `req_hndl`
          *
          * @param  req_hndl      Transfer request handle after postXferReq

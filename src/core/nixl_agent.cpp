@@ -16,6 +16,8 @@
  */
 
 #include <iostream>
+#include <future>
+#include <vector>
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -862,6 +864,34 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                       &opt_args);
     req_hndl->status = ret;
     return ret;
+}
+
+std::vector<nixl_status_t>
+nixlAgent::postXferReqBatched(const std::vector<nixlXferReqH*> &req_hndls,
+                              const nixl_opt_args_t* extra_params) const {
+    if (req_hndls.empty()) {
+        return {NIXL_ERR_INVALID_PARAM};
+    }
+
+    std::vector<std::future<nixl_status_t>> futures;
+    futures.reserve(req_hndls.size());
+
+    for (nixlXferReqH* req_hndl : req_hndls) {
+        futures.emplace_back(
+            std::async(std::launch::async, [this, req_hndl, extra_params]() {
+                return this->postXferReq(req_hndl, extra_params);
+            })
+        );
+    }
+
+    std::vector<nixl_status_t> results;
+    results.reserve(req_hndls.size());
+
+    for (auto& future : futures) {
+        results.push_back(future.get());
+    }
+
+    return results;
 }
 
 nixl_status_t
