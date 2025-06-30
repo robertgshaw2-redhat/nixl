@@ -1072,7 +1072,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     nixlUcxPublicMetadata *rmd;
     nixlUcxReq req;
     size_t workerId = intHandle->getWorkerId();
-    std::cout << "workerId: " << workerId << "/n";
+    std::cout << "workerId: " << workerId << "\n";
 
     if (lcnt != rcnt) {
         return NIXL_ERR_INVALID_PARAM;
