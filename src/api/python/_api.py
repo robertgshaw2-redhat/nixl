@@ -117,7 +117,7 @@ class nixl_agent:
 
         # TODO: populate init from default parameters, or define a set of params in python
         init: dict[str, str] = {}
-        init["num_workers"] = 32 # 32 workers!
+        init["num_workers"] = "32" # 32 workers!
 
         if instantiate_all:
             for plugin in self.plugin_list:
