@@ -627,9 +627,9 @@ class nixl_agent:
         self, remote_agent_name: str, notif_msg: bytes, backend: Optional[str] = None
     ):
         if backend is None:
-            return self.agent.genNotif(remote_agent_name, notif_msg)
+            self.agent.genNotif(remote_agent_name, notif_msg)
         else:
-            return self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
+            self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
 
     """
     @brief Get the full metadata of the local agent.
