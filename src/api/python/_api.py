@@ -73,6 +73,8 @@ class nixl_agent:
         agent_name: str,
         nixl_conf: Optional[nixl_agent_config] = None,
         instantiate_all: bool = False,
+        num_workers: Optional[int] = None,
+        num_shared_workers: Optional[int] = None
     ):
         if nixl_conf and instantiate_all:
             instantiate_all = False
@@ -117,7 +119,10 @@ class nixl_agent:
 
         # TODO: populate init from default parameters, or define a set of params in python
         init: dict[str, str] = {}
-        init["num_workers"] = "32" # 32 workers!
+        if num_workers:
+            init["num_workers"] = f"{num_workers}"
+        if num_shared_workers:
+            init["num_shared_workers"] = f"{num_shared_workers}"
 
         if instantiate_all:
             for plugin in self.plugin_list:
