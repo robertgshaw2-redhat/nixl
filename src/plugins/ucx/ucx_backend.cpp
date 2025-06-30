@@ -255,7 +255,7 @@ int nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_r
     return 0;
 }
 
-int nixlUcxEngine::vramApplyCtx()
+int nixlUcxEngine::vramApplyCtx() const
 {
     if(!cuda_addr_wa) {
         // Nothing to do
@@ -1062,6 +1062,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    vramApplyCtx();
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
     size_t i;
