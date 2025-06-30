@@ -814,12 +814,12 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (!req_hndl)
         return NIXL_ERR_INVALID_PARAM;
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-    // Check if the remote was invalidated before post/repost
-    if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
-        delete req_hndl;
-        return NIXL_ERR_NOT_FOUND;
-    }
+    // NIXL_SHARED_LOCK_GUARD(data->lock);
+    // // Check if the remote was invalidated before post/repost
+    // if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+    //     delete req_hndl;
+    //     return NIXL_ERR_NOT_FOUND;
+    // }
 
     // We can't repost while a request is in progress
     if (req_hndl->status == NIXL_IN_PROG) {

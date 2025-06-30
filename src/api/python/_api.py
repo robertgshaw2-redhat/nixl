@@ -117,6 +117,7 @@ class nixl_agent:
 
         # TODO: populate init from default parameters, or define a set of params in python
         init: dict[str, str] = {}
+        init["num_workers"] = 32 # 32 workers!
 
         if instantiate_all:
             for plugin in self.plugin_list:
@@ -475,7 +476,9 @@ class nixl_agent:
     @return List of status strings for each transfer operation ("DONE", "PROC", or "ERR").
     """
 
-    def transfer_batched(self, handles: list[nixl_xfer_handle], notif_msgs: list[bytes]) -> list[str]:
+    def transfer_batched(self, handles: list[nixl_xfer_handle], notif_msgs: Optional[list[bytes]] = None) -> list[str]:
+        if notif_msgs is None:
+            notif_msgs = [b""] * len(handles)
         statuses = self.agent.postXferReqBatched(handles, notif_msgs)
         result = []
         for status in statuses:
@@ -619,9 +622,9 @@ class nixl_agent:
         self, remote_agent_name: str, notif_msg: bytes, backend: Optional[str] = None
     ):
         if backend is None:
-            self.agent.genNotif(remote_agent_name, notif_msg)
+            return self.agent.genNotif(remote_agent_name, notif_msg)
         else:
-            self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
+            return self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
 
     """
     @brief Get the full metadata of the local agent.
