@@ -1075,6 +1075,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     nixlUcxPrivateMetadata *lmd;
     nixlUcxPublicMetadata *rmd;
     nixlUcxReq req;
+    size_t workerId = intHandle->getWorkerId();
 
     if (lcnt != rcnt) {
         return NIXL_ERR_INVALID_PARAM;
@@ -1111,7 +1112,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
 
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::milli> elapsed = end - start;
-    size_t workerId = intHandle->getWorkerId();
+    
     std::cout << "workerId " << workerId << " took " << elapsed.count() << " ms\n";
 
     /*
