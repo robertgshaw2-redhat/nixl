@@ -20,6 +20,7 @@
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
 
+#include <chrono>
 #include <optional>
 #include <limits>
 #include <string.h>
@@ -32,6 +33,8 @@
 #include <cufile.h>
 
 #endif
+
+size_t lastWorkerId = 0;
 
 namespace {
     void moveNotifList(notif_list_t &src, notif_list_t &tgt)
@@ -987,7 +990,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
-    nixlUcxWorker *worker = getWorkerWithPreference(false);
+    nixlUcxWorker *worker = getWorkerWithPreference(true);
     if (worker == nullptr) {
         return NIXL_ERR_BACKEND;
     }
@@ -1062,6 +1065,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    auto start = std::chrono::high_resolution_clock::now();
     vramApplyCtx();
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
@@ -1071,8 +1075,6 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     nixlUcxPrivateMetadata *lmd;
     nixlUcxPublicMetadata *rmd;
     nixlUcxReq req;
-    size_t workerId = intHandle->getWorkerId();
-    std::cout << "workerId: " << workerId << "\n";
 
     if (lcnt != rcnt) {
         return NIXL_ERR_INVALID_PARAM;
@@ -1106,6 +1108,11 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
             return ret;
         }
     }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> elapsed = end - start;
+    size_t workerId = intHandle->getWorkerId();
+    std::cout << "workerId " << workerId << " took " << elapsed.count() << " ms\n";
 
     /*
      * Flush keeps intHandle non-empty until the operation is actually
@@ -1364,7 +1371,9 @@ nixlUcxWorker *nixlUcxEngine::getSharedWorker() const
     }
 
     size_t numSharedWorker = uws.size() - numDedicatedWorker;
-    size_t worker_id = std::hash<std::thread::id>{}(std::this_thread::get_id()) % numSharedWorker;
+    // size_t worker_id = std::hash<std::thread::id>{}(std::this_thread::get_id()) % numSharedWorker;
+    size_t worker_id = lastWorkerId % numSharedWorker;
+    lastWorkerId += 1;
     return uws[worker_id + numDedicatedWorker].get();
 }
 
