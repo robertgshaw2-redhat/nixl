@@ -1067,7 +1067,6 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
 {
     auto start = std::chrono::high_resolution_clock::now();
     vramApplyCtx();
-    auto second = std::chrono::high_resolution_clock::now();
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
     size_t i;
@@ -1112,10 +1111,9 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     }
 
     auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::milli> getctx = second - start;
     std::chrono::duration<double, std::milli> elapsed = end - start;
     
-    std::cout << "workerId" << workerId << ": " << elapsed.count() << " | " << getctx.count() << "\n";
+    std::cout << "workerId" << workerId << ": " << elapsed.count() << "\n";
 
     /*
      * Flush keeps intHandle non-empty until the operation is actually
